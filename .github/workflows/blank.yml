@@ -1,28 +1,36 @@
-- name: Delete Stale Branches
-  env:
-    GITHUB_TOKEN: ${{ secrets.SECRET_GITHUB_TOKEN }}  # Use PAT instead of GITHUB_TOKEN
-  run: |
-    git config --global user.name "github-actions[bot]"
-    git config --global user.email "github-actions[bot]@users.noreply.github.com"
+name: Delete Old Branches
 
-    # Authenticate using PAT
-    git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/gearset438/test.git
-    
-    # Fetch all remote branches
-    git fetch --prune
-    
-    # Get a list of branches (excluding main and protected ones)
-    branches=$(git branch -r | grep -v "main\|dev\|qa\|staging" | awk '{print $1}' | sed 's/origin\///')
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight UTC
+  workflow_dispatch: # Allows manual triggering
 
-    for branch in $branches; do
-      # Get the last commit date
-      last_commit_date=$(git log -1 --format=%ct origin/$branch)
-      current_date=$(date +%s)
-      age=$(( (current_date - last_commit_date) / 86400 ))
+jobs:
+  delete-old-branches:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # Delete branches older than 30 days
-      if [ $age -gt 30 ]; then
-        echo "Deleting branch: $branch (Last commit: $age days ago)"
-        git push origin --delete $branch
-      fi
-    done
+      - name: Install jq
+        run: sudo apt-get install jq -y
+
+      - name: Get branches older than 1 day
+        env:
+          GITHUB_TOKEN: ${{ secrets.SECRET_GITHUB_TOKEN }}
+        run: |
+          # Get the list of branches excluding protected ones
+          branches=$(gh api repos/${{ github.repository }}/branches --paginate | jq -r '.[].name' | grep -vE "^(main|dev|qa)$")
+          
+          for branch in $branches; do
+            last_commit_date=$(gh api repos/${{ github.repository }}/commits/$branch | jq -r '.commit.committer.date')
+            branch_age=$(( ( $(date -u +%s) - $(date -u -d "$last_commit_date" +%s) ) / 86400 ))
+            
+            if [ "$branch_age" -ge 1 ]; then
+              echo "Deleting branch: $branch"
+              gh api --method DELETE repos/${{ github.repository }}/git/refs/heads/$branch
+            fi
+          done
+        
+      - name: Cleanup
+        run: echo "Old branches deleted successfully!"
