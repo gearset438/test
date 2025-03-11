@@ -1,36 +1,28 @@
-name: Scheduled Branch Cleanup
+- name: Delete Stale Branches
+  env:
+    GITHUB_TOKEN: ${{ secrets.SECRET_GITHUB_TOKEN }}  # Use PAT instead of GITHUB_TOKEN
+  run: |
+    git config --global user.name "github-actions[bot]"
+    git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-on:
-  schedule:
-    - cron: "* * * * *" # 
-  workflow_dispatch: # Allows manual triggering
+    # Authenticate using PAT
+    git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/gearset438/test.git
+    
+    # Fetch all remote branches
+    git fetch --prune
+    
+    # Get a list of branches (excluding main and protected ones)
+    branches=$(git branch -r | grep -v "main\|dev\|qa\|staging" | awk '{print $1}' | sed 's/origin\///')
 
-jobs:
-  cleanup:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    for branch in $branches; do
+      # Get the last commit date
+      last_commit_date=$(git log -1 --format=%ct origin/$branch)
+      current_date=$(date +%s)
+      age=$(( (current_date - last_commit_date) / 86400 ))
 
-      - name: Delete Stale Branches
-        env:
-          GITHUB_TOKEN: ${{ secrets.SECRET_GITHUB_TOKEN }}
-        run: |
-          # Fetch all remote branches
-          git fetch --prune
-
-          # Get a list of branches (excluding main and protected ones)
-          branches=$(git branch -r | grep -v "main\|dev\|qa\|staging" | awk '{print $1}' | sed 's/origin\///')
-
-          for branch in $branches; do
-            # Get the last commit date
-            last_commit_date=$(git log -1 --format=%ct origin/$branch)
-            current_date=$(date +%s)
-            age=$(( (current_date - last_commit_date) / 86400 ))
-
-            # Delete branches older than 30 days
-            if [ $age -gt 1 ]; then
-              echo "Deleting branch: $branch (Last commit: $age days ago)"
-              git push origin --delete $branch
-            fi
-          done
+      # Delete branches older than 30 days
+      if [ $age -gt 30 ]; then
+        echo "Deleting branch: $branch (Last commit: $age days ago)"
+        git push origin --delete $branch
+      fi
+    done
